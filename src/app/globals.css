@@ -1,0 +1,135 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Kishwour design tokens
+ * ─────────────────────
+ * Brand palette (raw)         → --brand-*        (use via bg-forest, text-jute, …)
+ * Semantic shadcn/ui tokens   → --background, --primary, …  (use via bg-primary, …)
+ *
+ * Accessibility notes
+ * - Forest Green on Warm White: 6.0:1 (AA for all text)
+ * - Charcoal on Warm White: 13.2:1
+ * - Jute Brown on Warm White: 3.9:1 — use for large text, icons and accents only;
+ *   use --brand-jute-deep for small text.
+ */
+
+:root {
+  /* Brand palette */
+  --brand-forest: #176b43;
+  --brand-forest-deep: #0f4d30;
+  --brand-beige: #e9dfc9;
+  --brand-warm-white: #f8f6f0;
+  --brand-jute: #a66e43;
+  --brand-jute-deep: #7f5230;
+  --brand-charcoal: #292b25;
+
+  /* Semantic tokens (shadcn/ui) */
+  --radius: 0.5rem;
+  --background: var(--brand-warm-white);
+  --foreground: var(--brand-charcoal);
+  --card: #fffdf8;
+  --card-foreground: var(--brand-charcoal);
+  --popover: #fffdf8;
+  --popover-foreground: var(--brand-charcoal);
+  --primary: var(--brand-forest);
+  --primary-foreground: var(--brand-warm-white);
+  --secondary: var(--brand-beige);
+  --secondary-foreground: var(--brand-charcoal);
+  --muted: #f0ebe0;
+  --muted-foreground: #5c5e55;
+  --accent: #efe7d6;
+  --accent-foreground: var(--brand-charcoal);
+  --destructive: #b42318;
+  --border: #ddd3bf;
+  --input: #d3c8b1;
+  --ring: var(--brand-forest);
+}
+
+@theme inline {
+  /* Fonts (set by next/font in the root layout) */
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-display), ui-serif, Georgia, serif;
+
+  /* Brand colours: bg-forest, text-jute, border-beige, … */
+  --color-forest: var(--brand-forest);
+  --color-forest-deep: var(--brand-forest-deep);
+  --color-beige: var(--brand-beige);
+  --color-warm-white: var(--brand-warm-white);
+  --color-jute: var(--brand-jute);
+  --color-jute-deep: var(--brand-jute-deep);
+  --color-charcoal: var(--brand-charcoal);
+
+  /* Semantic colours */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-serif tracking-tight text-balance;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility container-page {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 80rem;
+  padding-inline: 1rem;
+
+  @media (width >= 40rem) {
+    padding-inline: 1.5rem;
+  }
+
+  @media (width >= 64rem) {
+    padding-inline: 2rem;
+  }
+}

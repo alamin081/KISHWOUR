@@ -1,0 +1,482 @@
+// Kishwour — database schema (PostgreSQL on Neon)
+// Docs: docs/PROJECT_ARCHITECTURE.md → "Data model"
+//
+// Conventions
+// - Primary keys are cuid strings.
+// - Money is Decimal(12, 2) with an ISO 4217 currency code stored alongside it.
+// - Countries are ISO 3166-1 alpha-2 codes (e.g. "BD", "DE", "US").
+// - B2C-only fields (retailPrice, stockQuantity) are nullable, so retail can be
+//   added later without a breaking migration.
+// - Connection URLs live in prisma.config.ts (Prisma 7), not in this file.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  EDITOR
+  CUSTOMER
+}
+
+/// International commercial terms used in wholesale price quotes.
+enum Incoterm {
+  EXW
+  FOB
+  CFR
+  CIF
+  DAP
+  DDP
+}
+
+enum InquiryType {
+  WHOLESALE
+  OEM_ODM
+  SAMPLE_REQUEST
+  GENERAL
+}
+
+/// Inquiry pipeline. SPAM is kept for admins to flag junk (excluded from statistics).
+enum InquiryStatus {
+  NEW
+  REVIEWING
+  CONTACTED
+  QUOTATION_SENT
+  NEGOTIATION
+  APPROVED
+  REJECTED
+  CLOSED
+  SPAM
+}
+
+/// Where a lead came from. Inquiries received outside the website are entered by admins.
+enum InquirySource {
+  WEBSITE
+  ALIBABA
+  EMAIL
+  WHATSAPP
+  TRADE_SHOW
+  REFERRAL
+  OTHER
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+// ─────────────────────────────────────────────────────────────
+// Auth tables (used once authentication is built; shape matches @auth/prisma-adapter)
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  /// Only set for credential (email + password) logins. Never select outside auth code.
+  passwordHash  String?
+  role          Role      @default(CUSTOMER)
+  isActive      Boolean   @default(true)
+
+  customer          Customer?
+  accounts          Account[]
+  sessions          Session[]
+  assignedInquiries Inquiry[]     @relation("InquiryAssignee")
+  settingsUpdates   SiteSetting[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Catalog
+// ─────────────────────────────────────────────────────────────
+
+model Category {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String? @db.Text
+
+  /// Image URL (Cloudinary).
+  image         String?
+  /// Cloudinary public_id, used to replace/delete the asset.
+  imagePublicId String?
+
+  /// Optional parent for sub-categories (e.g. Footwear → Leather Sandals).
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  seoTitle       String?
+  seoDescription String?
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([isActive, sortOrder])
+}
+
+model Product {
+  id               String  @id @default(cuid())
+  name             String
+  slug             String  @unique
+  sku              String? @unique
+  shortDescription String?
+  description      String? @db.Text
+
+  /// A category with products cannot be deleted (Restrict) — move or archive products first.
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  // Specification
+  /// ISO 3166-1 alpha-2 country code.
+  originCountry String   @default("BD") @db.Char(2)
+  /// District / region in Bangladesh where the product is made.
+  originRegion  String?
+  /// Descriptive material text shown to buyers, e.g. "Jute with cotton lining".
+  material      String?
+  /// Normalised material tags used by the catalogue filter, e.g. ["Jute", "Cotton"].
+  materials     String[] @default([])
+  /// Product type used by the catalogue filter, e.g. "Tote bag", "Sandal", "Basket".
+  productType   String?
+  colors        String[]
+  dimensions    String?
+  weight        String?
+
+  // B2B wholesale terms
+  minimumOrderQuantity Int?
+  /// Unit for MOQ and quantities: pieces, pairs, sets, kg, …
+  unit                 String    @default("pieces")
+  priceMin             Decimal?  @db.Decimal(12, 2)
+  priceMax             Decimal?  @db.Decimal(12, 2)
+  currency             String    @default("USD") @db.Char(3)
+  incoterm             Incoterm? @default(FOB)
+  leadTimeDays         Int?
+  productionCapacity   String?
+  packagingDetails     String?   @db.Text
+  hsCode               String?
+  sampleAvailable      Boolean   @default(false)
+  isCustomizable       Boolean   @default(false)
+  customizationOptions String[]
+  /// The same product on the Kishwour Alibaba supplier store (entered manually — no API sync).
+  alibabaUrl           String?
+  /// Alibaba product ID, recorded manually by an admin.
+  alibabaProductId     String?
+  /// When an admin last updated the Alibaba link/ID by hand.
+  alibabaUpdatedAt     DateTime?
+
+  // Future B2C (unused until retail launch)
+  retailPrice   Decimal? @db.Decimal(12, 2)
+  stockQuantity Int?
+
+  /// Visible on the public site only when true.
+  isActive   Boolean @default(false)
+  isFeatured Boolean @default(false)
+
+  seoTitle       String?
+  seoDescription String?
+
+  images         ProductImage[]
+  variants       ProductVariant[]
+  inquiryItems   InquiryItem[]
+  quotationItems QuotationItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId, isActive])
+  @@index([isActive, isFeatured])
+  @@index([productType])
+  @@index([materials], type: Gin)
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  imageUrl  String
+  /// Cloudinary public_id, used to replace/delete the asset.
+  publicId  String?
+  altText   String?
+  width     Int?
+  height    Int?
+  sortOrder Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
+}
+
+/// A sellable variation of a product (size, colour, finish). Prices and stock for B2C can be
+/// added here later without changing Product.
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  /// Display name, e.g. "Natural / Large".
+  name      String
+  sku       String? @unique
+  color     String?
+  size      String?
+  material  String?
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId, sortOrder])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Inquiries and quotations (B2B)
+// ─────────────────────────────────────────────────────────────
+
+/// A buyer (company / importer). Created or updated from every inquiry, matched by email.
+model Customer {
+  id            String  @id @default(cuid())
+  email         String  @unique
+  companyName   String?
+  contactPerson String?
+  phone         String?
+  /// ISO 3166-1 alpha-2 country code.
+  country       String? @db.Char(2)
+  businessType  String?
+  website       String?
+  /// Last delivery address given (e.g. for samples).
+  address       String? @db.Text
+  notes         String? @db.Text
+
+  /// Optional login for a future B2C / buyer portal.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  inquiries Inquiry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([country])
+  @@index([companyName])
+}
+
+model Inquiry {
+  id            String        @id @default(cuid())
+  /// Human-readable number shown to the buyer, e.g. KSW-INQ-2026-000123.
+  inquiryNumber String        @unique
+  inquiryType   InquiryType
+  status        InquiryStatus @default(NEW)
+  source        InquirySource @default(WEBSITE)
+
+  // Buyer details as submitted
+  companyName   String?
+  contactPerson String
+  email         String
+  phone         String?
+  /// ISO 3166-1 alpha-2 country code.
+  country       String  @db.Char(2)
+  website       String?
+  /// importer, wholesaler, retailer, brand owner, distributor, …
+  businessType  String?
+
+  subject                   String?
+  message                   String    @db.Text
+  customizationRequirements String?   @db.Text
+  /// Delivery address for sample requests.
+  deliveryAddress           String?   @db.Text
+  targetPrice               String?
+  destinationPort           String?
+  requiredBy                DateTime?
+
+  items      InquiryItem[]
+  quotations Quotation[]
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  /// Client-generated idempotency key: a double-submitted form never creates two inquiries.
+  submissionKey   String?   @unique
+  /// When the buyer's acknowledgement email was actually delivered to the email service.
+  buyerAckSentAt  DateTime?
+  /// When the admin notification email was actually delivered to the email service.
+  adminNotifiedAt DateTime?
+
+  /// Staff member responsible for this inquiry.
+  assignedToId String?
+  assignedTo   User?   @relation("InquiryAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  /// Internal notes, never shown to the buyer.
+  adminNotes String? @db.Text
+  /// Salted hash of the submitter's IP, for abuse review only (never the raw IP).
+  ipHash     String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([inquiryType])
+  @@index([email])
+  @@index([country])
+  @@index([assignedToId])
+  @@index([customerId])
+}
+
+model InquiryItem {
+  id                String  @id @default(cuid())
+  inquiryId         String
+  /// Null if the product was later deleted; productName keeps the history readable.
+  productId         String?
+  /// Product name at the time of the inquiry.
+  productName       String
+  /// SKU as given by the buyer or copied from the product.
+  productSku        String?
+  requestedQuantity Int?
+  notes             String?
+
+  inquiry Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([inquiryId, productId])
+  @@index([productId])
+}
+
+model Quotation {
+  id              String          @id @default(cuid())
+  /// Human-readable number, e.g. KSW-QT-2026-000045.
+  quotationNumber String          @unique
+  status          QuotationStatus @default(DRAFT)
+
+  /// Every quotation answers an inquiry. An inquiry with quotations cannot be deleted.
+  inquiryId String
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Restrict)
+
+  currency      String    @default("USD") @db.Char(3)
+  incoterm      Incoterm?
+  subtotal      Decimal   @default(0) @db.Decimal(12, 2)
+  shippingCost  Decimal   @default(0) @db.Decimal(12, 2)
+  totalAmount   Decimal   @default(0) @db.Decimal(12, 2)
+  validityDate  DateTime?
+  /// e.g. "Sea freight to Hamburg, consolidated" (incoterm is stored separately).
+  shippingTerms String?
+  /// e.g. "30% advance, 70% against B/L copy".
+  paymentTerms  String?
+  /// e.g. "45 days after sample approval".
+  leadTime      String?
+  notes         String?   @db.Text
+
+  items QuotationItem[]
+
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([inquiryId])
+  @@index([status, createdAt])
+}
+
+model QuotationItem {
+  id          String  @id @default(cuid())
+  quotationId String
+  /// Null for custom (OEM/ODM) lines or if the product was later deleted.
+  productId   String?
+  description String
+  quantity    Int
+  /// Minimum order quantity offered for this line.
+  moq         Int?
+  unit        String  @default("pieces")
+  unitPrice   Decimal @db.Decimal(12, 2)
+  /// quantity × unitPrice, stored so historical quotes never change.
+  totalPrice  Decimal @db.Decimal(12, 2)
+  sortOrder   Int     @default(0)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([quotationId, sortOrder])
+  @@index([productId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Site settings & content (edited in the admin)
+// ─────────────────────────────────────────────────────────────
+
+/// Key/value store for editable site content and business settings
+/// (contact details, social links, Alibaba store URL, homepage/about copy, footer, brand).
+/// Values are validated with Zod in src/features/settings before saving.
+model SiteSetting {
+  key   String @id
+  value Json
+
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
+}
